@@ -35,7 +35,7 @@ func getAvailableClients() ([]string, error) {
 	return availableClients, nil
 }
 
-func promptForClient(availableClients []string, myPort int) string {
+func promptForReceiverClient(availableClients []string, myPort int) (string, bool) {
 	var selectedClient string
 
 	for {
@@ -51,6 +51,10 @@ func promptForClient(availableClients []string, myPort int) string {
 		fmt.Print("Select client: ")
 		fmt.Scanln(&selectedClient)
 
+		if selectedClient == "refresh" {
+			return "", true
+		}
+
 		selectedClientIndex := int(selectedClient[0]-'0') - 1
 
 		if selectedClientIndex < 0 || selectedClientIndex >= len(availableClients) {
@@ -58,27 +62,44 @@ func promptForClient(availableClients []string, myPort int) string {
 			continue
 		}
 
-		return availableClients[selectedClientIndex]
+		return availableClients[selectedClientIndex], false
 	}
 }
 
-func connectToClient(port string) {
+type Receiver struct {
+	Address string
+	Connection *websocket.Conn
+}
 
-	fmt.Println("Connecting to client", fmt.Sprintf("http://localhost:%s/connect", port));
-	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://localhost:%s/connect", port), nil)
+var currentReceiver *Receiver
+
+func (receiver *Receiver) closeConnection() {
+	receiver.Connection.Close()
+}
+
+func (receiver *Receiver) openConnection(message chan string) {
+	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://localhost:%s/connect", receiver.Address), nil)
+
+	receiver.Connection = conn
 
 	if err != nil {
-		log.Println("Error connecting to client", err)
+		log.Println("Error connecting to receiver", err)
 		return
 	}
 
 	go func() {
 		fmt.Println("Enter message: ")
 		for {
-			var message string
-			fmt.Scanln(&message)
 
-			err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+			enteredMessage := <-message
+
+			if enteredMessage == "" {
+				continue
+			} else {
+				message <- ""
+			}
+
+			err := conn.WriteMessage(websocket.TextMessage, []byte(enteredMessage))
 			if err != nil {
 				log.Println("Error writing message", err)
 				return
@@ -88,39 +109,98 @@ func connectToClient(port string) {
 
 }
 
+var message = make(chan string)
+
+func listenForInput(message chan string) {
+	for {
+		var enteredMessage string
+		fmt.Scanln(&enteredMessage)
+		fmt.Println("Message entered: ", enteredMessage)
+		if enteredMessage == "switch" {
+			fmt.Println("User wants to switch clients")
+			switchReceiver()
+		} else {
+			message <- enteredMessage
+		}
+	}
+}
+
+func switchReceiver() {
+	go func() {
+		for {
+		clients, err := getAvailableClients()
+
+		if err != nil {
+			log.Println("Error sending request", err)
+			panic(err)
+		}
+
+		selectedClient, refresh := promptForReceiverClient(clients, myPort)
+		if refresh {
+			continue
+		}
+
+		if currentReceiver != nil {
+			currentReceiver.closeConnection()
+		}
+
+		currentReceiver = &Receiver{Address: selectedClient}
+		currentReceiver.openConnection(message)
+		break
+	}
+	}()
+
+}
+
+func handleConnectionRequest(w http.ResponseWriter, r *http.Request) {
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+
+	if err != nil {
+		log.Println("Error upgrading connection", err)
+		return
+	}
+
+	go func() {
+		defer conn.Close()
+		for {
+			_, message, err := conn.ReadMessage()
+			if err != nil {
+				log.Println("Error reading message", err)
+				return
+			}
+			log.Printf("Message from %s: %s", r.RemoteAddr, message)
+
+		}
+	}()
+
+}
+
+func registerWithCoordinator(listener net.Listener) error {
+	myPort = listener.Addr().(*net.TCPAddr).Port
+	requestBody := fmt.Sprintf("address=%d", myPort)
+
+	_, err := http.Post("http://localhost:8080/register", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(requestBody)))
+
+	if err != nil {
+		log.Println("Error sending request", err)
+		return err
+	}
+
+	return nil
+}
+
+var myPort int
+
 func main() {
 
 	log.Println("Starting client")
 
-	http.HandleFunc("/connect", func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Connection request received", r.RemoteAddr)
-
-		upgrader := websocket.Upgrader{
-			ReadBufferSize:  1024,
-			WriteBufferSize: 1024,
-		}
-
-		conn, err := upgrader.Upgrade(w, r, nil)
-
-		if err != nil {
-			log.Println("Error upgrading connection", err)
-			return
-		}
-
-		go func() {
-			defer conn.Close()
-			for {
-				_, message, err := conn.ReadMessage()
-				if err != nil {
-					log.Println("Error reading message", err)
-					return
-				}
-				log.Printf("Received message: %s", message)
-
-			}
-		}()
-
-	})
+	http.HandleFunc("/connect", handleConnectionRequest)
 
 	server := &http.Server{
 		Addr: ":0",
@@ -133,35 +213,14 @@ func main() {
 		panic(err)
 	}
 
-	myPort := listener.Addr().(*net.TCPAddr).Port
-	requestBody := fmt.Sprintf("address=%d", myPort)
-
-	response, err := http.Post("http://localhost:8080/register", "application/x-www-form-urlencoded", bytes.NewBuffer([]byte(requestBody)))
-
-	log.Println("Request sent", response.Status)
-
-	if err != nil {
-		log.Println("Error sending request", err)
-		panic(err)
-	}
-
 	log.Println("Using port:", listener.Addr().(*net.TCPAddr).Port)
 
-	clients, err := getAvailableClients()
-
-	if err != nil {
-		log.Println("Error sending request", err)
-		panic(err)
+	if registerWithCoordinator(listener) != nil {
+		log.Println("Error registering with coordinator")
+		return
 	}
 
-	go func() {
-		selectedClient := promptForClient(clients, myPort)
-
-		connectToClient(selectedClient)
-
-		log.Println("Selected client:", selectedClient)
-	}()
+	go switchReceiver()
 
 	panic(http.Serve(listener, nil))
-
 }
