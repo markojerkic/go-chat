@@ -39,6 +39,11 @@ func promptForReceiverClient(availableClients []string, myPort int) (string, boo
 	var selectedClient string
 
 	for {
+		isLocked := <-stdLock
+		if isLocked {
+			continue
+		}
+		stdLock <- true
 
 		for index, client := range availableClients {
 			if client == fmt.Sprintf("%d", myPort) {
@@ -62,12 +67,14 @@ func promptForReceiverClient(availableClients []string, myPort int) (string, boo
 			continue
 		}
 
+		stdLock <- false
+
 		return availableClients[selectedClientIndex], false
 	}
 }
 
 type Receiver struct {
-	Address string
+	Address    string
 	Connection *websocket.Conn
 }
 
@@ -78,6 +85,7 @@ func (receiver *Receiver) closeConnection() {
 }
 
 func (receiver *Receiver) openConnection(message chan string) {
+	log.Println("Opening connection to receiver", receiver.Address)
 	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://localhost:%s/connect", receiver.Address), nil)
 
 	receiver.Connection = conn
@@ -109,25 +117,32 @@ func (receiver *Receiver) openConnection(message chan string) {
 
 }
 
-var message = make(chan string)
-
 func listenForInput(message chan string) {
 	for {
+		isLocked := <-stdLock
+		if isLocked {
+			continue
+		}
+
 		var enteredMessage string
+
+		stdLock <- true
 		fmt.Scanln(&enteredMessage)
 		fmt.Println("Message entered: ", enteredMessage)
 		if enteredMessage == "switch" {
 			fmt.Println("User wants to switch clients")
+			stdLock <- false
 			switchReceiver()
 		} else {
 			message <- enteredMessage
 		}
+		stdLock <- false
 	}
 }
 
 func switchReceiver() {
-	go func() {
-		for {
+	for {
+		log.Println("Switching receiver")
 		clients, err := getAvailableClients()
 
 		if err != nil {
@@ -141,6 +156,7 @@ func switchReceiver() {
 		}
 
 		if currentReceiver != nil {
+			log.Println("Closing connection to current receiver")
 			currentReceiver.closeConnection()
 		}
 
@@ -148,7 +164,6 @@ func switchReceiver() {
 		currentReceiver.openConnection(message)
 		break
 	}
-	}()
 
 }
 
@@ -164,6 +179,8 @@ func handleConnectionRequest(w http.ResponseWriter, r *http.Request) {
 		log.Println("Error upgrading connection", err)
 		return
 	}
+
+	log.Println("Connection established with", r.RemoteAddr)
 
 	go func() {
 		defer conn.Close()
@@ -195,6 +212,8 @@ func registerWithCoordinator(listener net.Listener) error {
 }
 
 var myPort int
+var message chan string
+var stdLock chan bool
 
 func main() {
 
@@ -220,7 +239,13 @@ func main() {
 		return
 	}
 
+	stdLock = make(chan bool, 1)
+	message = make(chan string, 1)
+
+	stdLock <- false
+	log.Println("Registered with coordinator")
 	go switchReceiver()
+	go listenForInput(message)
 
 	panic(http.Serve(listener, nil))
 }
