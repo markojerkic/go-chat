@@ -2,47 +2,19 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+var registeredClients = map[int]string{}
+
+type Peer struct {
+	ID   string "json:id"
+	Port int    "json:port"
 }
-
-func readMessages(conn *websocket.Conn) {
-	defer conn.Close()
-
-	for {
-		_, p, err := conn.ReadMessage()
-
-		if err != nil {
-			log.Println("Error reading message", err)
-		}
-
-		log.Println("Message received: ", string(p))
-
-	}
-
-}
-
-func wsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	go readMessages(conn)
-}
-
-var registeredClients = map[string]bool{}
 
 func main() {
 	http.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
@@ -51,10 +23,14 @@ func main() {
 			return
 		}
 
-		adr := r.FormValue("address")
-		log.Println("Registering", adr)
-
-		registeredClients[adr] = true
+		port, err := strconv.Atoi(r.FormValue("address"))
+		if err != nil {
+			log.Println("Invalid port", err)
+			http.Error(w, "Invalid port", http.StatusBadRequest)
+			return
+		}
+		registeredClients[port] = r.FormValue("id")
+		log.Println("Registered", r.FormValue("id"), "at port", port, registeredClients)
 	})
 
 	http.HandleFunc("/clients", func(w http.ResponseWriter, r *http.Request) {
@@ -63,12 +39,12 @@ func main() {
 			return
 		}
 
-		keys := make([]string, 0, len(registeredClients))
-		for k := range registeredClients {
-			keys = append(keys, k)
+		var peers []Peer
+		for k, v := range registeredClients {
+			peers = append(peers, Peer{v, k})
 		}
 
-		clients, err := json.Marshal(keys)
+		clients, err := json.Marshal(peers)
 
 		if err != nil {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)

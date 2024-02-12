@@ -39,17 +39,6 @@ func (c *Connection) sendMessage(message string) {
 	}
 }
 
-func (c *Connection) watchIncomingMessages() error {
-	for {
-		message := <-c.incomingMessages
-
-		if message == "" {
-			continue
-		}
-
-	}
-}
-
 func (c *Connection) openConnection(port int) error {
 	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://localhost:%d/connect", port), nil)
 
@@ -58,6 +47,8 @@ func (c *Connection) openConnection(port int) error {
 	}
 
 	c.conn = conn
+
+	go c.readMessages()
 
 	return nil
 }
@@ -78,6 +69,8 @@ func (c *Connection) acceptConnection(w http.ResponseWriter, r *http.Request) er
 	peerId := r.FormValue("id")
 	c.id = peerId
 	c.conn = conn
+
+	go c.readMessages()
 
 	return nil
 }
