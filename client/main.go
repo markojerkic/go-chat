@@ -333,29 +333,29 @@ func watchStdIn(clients chan map[string]Connection) {
 		var message string
 		fmt.Scanln(&message)
 
-		if currentPeerId == nil {
+		if currentPeerId == nil || message == "switch" {
 			peer, err := selectPeer()
 			if err != nil {
 				log.Println("Error selecting peer", err)
 				continue
 			}
 			currentPeerId = &peer
-		}
 
-		peerConnection, err := getOrCreatePeerConnection(clients, *currentPeerId)
-		if err != nil {
-			log.Println("Error getting or creating peer connection", err)
-			panic(err)
-		}
-
-		if message == "switch" {
 			log.Println("User wants to switch peers")
+
 		} else {
-			peerConnection.sendMessage(message)
+			peerConnection, err := getOrCreatePeerConnection(clients, *currentPeerId)
+			if err != nil {
+				log.Println("Error getting or creating peer connection", err)
+				panic(err)
+			}
+			go peerConnection.sendMessage(message)
 		}
 
 	}
 }
 
 func main() {
+	clients := make(chan map[string]Connection)
+	go watchStdIn(clients)
 }

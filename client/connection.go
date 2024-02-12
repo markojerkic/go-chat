@@ -8,7 +8,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-
 type Connection struct {
 	id               string
 	conn             *websocket.Conn
@@ -31,7 +30,13 @@ func (c *Connection) readMessages() error {
 }
 
 func (c *Connection) sendMessage(message string) {
-	c.incomingMessages <- message
+	err := c.conn.WriteMessage(websocket.TextMessage, []byte(message))
+
+	c.incomingMessages <- ""
+
+	if err != nil {
+		log.Println("Error writing message", err)
+	}
 }
 
 func (c *Connection) watchIncomingMessages() error {
@@ -42,16 +47,6 @@ func (c *Connection) watchIncomingMessages() error {
 			continue
 		}
 
-		err := c.conn.WriteMessage(websocket.TextMessage, []byte(message))
-
-		c.incomingMessages <- ""
-
-		if err != nil {
-			log.Println("Error writing message")
-			return err
-		}
-
-		return nil
 	}
 }
 
@@ -90,4 +85,3 @@ func (c *Connection) acceptConnection(w http.ResponseWriter, r *http.Request) er
 func (c *Connection) closeConnection() {
 	c.conn.Close()
 }
-
