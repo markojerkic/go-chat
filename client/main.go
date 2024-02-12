@@ -8,6 +8,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+
+	"github.com/gorilla/mux"
 )
 
 type Peer struct {
@@ -63,14 +65,14 @@ func selectPeer() (Peer, error) {
 
 }
 
-func getOrCreatePeerConnection(clients chan map[string]Connection, currentPeer Peer) (Connection, error) {
+func getOrCreatePeerConnection(clients chan map[string]Connection, currentPeer Peer, myId string) (Connection, error) {
 	connectedClients := <-clients
 
 	savedConnection, hasSavedConnection := connectedClients[currentPeer.ID]
 	if !hasSavedConnection {
 
 		connection := Connection{currentPeer.ID, nil, make(chan string)}
-		err := connection.openConnection(currentPeer.Port)
+		err := connection.openConnection(currentPeer.Port, myId)
 		if err != nil {
 			log.Println("Error opening connection to peer", err)
 			return Connection{}, err
@@ -85,7 +87,7 @@ func getOrCreatePeerConnection(clients chan map[string]Connection, currentPeer P
 
 }
 
-func watchStdIn(clients chan map[string]Connection) {
+func watchStdIn(clients chan map[string]Connection, myId string) {
 	var currentPeerId *Peer
 
 	for {
@@ -113,7 +115,7 @@ func watchStdIn(clients chan map[string]Connection) {
 			log.Println("User wants to switch peers")
 
 		} else {
-			peerConnection, err := getOrCreatePeerConnection(clients, *currentPeerId)
+			peerConnection, err := getOrCreatePeerConnection(clients, *currentPeerId, myId)
 			if err != nil {
 				log.Println("Error getting or creating peer connection", err)
 				panic(err)
@@ -124,7 +126,7 @@ func watchStdIn(clients chan map[string]Connection) {
 	}
 }
 
-func registerWithCoordinator(listener net.Listener) (int, error) {
+func registerWithCoordinator(listener net.Listener) (string, error) {
 
 	var myId string
 	fmt.Print("Enter your id: ")
@@ -137,24 +139,47 @@ func registerWithCoordinator(listener net.Listener) (int, error) {
 
 	if err != nil {
 		log.Println("Error sending request", err)
-		return 0, err
+		return "", err
 	}
 
-	return myPort, nil
+	return myId, nil
+}
+
+func handleConnectionRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	connections := make(chan map[string]Connection)
+	peerConnections := make(map[string]Connection)
+	connectionsChannel := make(chan map[string]Connection)
 
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
 		panic(err)
 	}
 
-	registerWithCoordinator(listener)
+	myId, err := registerWithCoordinator(listener)
+	if err != nil {
+		panic(err)
+	}
 
-	go watchStdIn(connections)
+	go watchStdIn(connectionsChannel, myId)
 
+	http.HandleFunc("/connect/{id}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		id, ok := vars["id"]
+		if !ok {
+			log.Println("No id provided")
+			http.Error(w, "No id provided", http.StatusBadRequest)
+			return
+		}
+
+		connection := Connection{id, nil, make(chan string)}
+		peerConnections[id] = connection
+		connectionsChannel <- peerConnections
+		go connection.acceptConnection(w, r)
+	})
+
+	connectionsChannel <- peerConnections
 	panic(http.Serve(listener, nil))
 
 }

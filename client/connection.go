@@ -39,8 +39,8 @@ func (c *Connection) sendMessage(message string) {
 	}
 }
 
-func (c *Connection) openConnection(port int) error {
-	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://localhost:%d/connect", port), nil)
+func (c *Connection) openConnection(port int, myId string) error {
+	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://localhost:%d/connect/%s", port, myId), nil)
 
 	if err != nil {
 		return err
