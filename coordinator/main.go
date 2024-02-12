@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var registeredClients = map[int]string{}
+var registeredClients = map[string]int{}
 
 type Peer struct {
 	ID   string "json:id"
@@ -29,7 +29,7 @@ func main() {
 			http.Error(w, "Invalid port", http.StatusBadRequest)
 			return
 		}
-		registeredClients[port] = r.FormValue("id")
+		registeredClients[r.FormValue("id")] = port
 		log.Println("Registered", r.FormValue("id"), "at port", port, registeredClients)
 	})
 
@@ -41,7 +41,7 @@ func main() {
 
 		var peers []Peer
 		for k, v := range registeredClients {
-			peers = append(peers, Peer{v, k})
+			peers = append(peers, Peer{k, v})
 		}
 
 		clients, err := json.Marshal(peers)

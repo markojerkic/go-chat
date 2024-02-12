@@ -30,6 +30,7 @@ func (c *Connection) readMessages() error {
 }
 
 func (c *Connection) sendMessage(message string) {
+	log.Println("Sending message", message)
 	err := c.conn.WriteMessage(websocket.TextMessage, []byte(message))
 
 	c.incomingMessages <- ""
@@ -37,12 +38,14 @@ func (c *Connection) sendMessage(message string) {
 	if err != nil {
 		log.Println("Error writing message", err)
 	}
+	log.Println("Message sent")
 }
 
 func (c *Connection) openConnection(port int, myId string) error {
 	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://localhost:%d/connect/%s", port, myId), nil)
 
 	if err != nil {
+		log.Println("Error connecting to", port, err)
 		return err
 	}
 

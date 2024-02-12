@@ -91,18 +91,11 @@ func watchStdIn(clients chan map[string]Connection, myId string) {
 	var currentPeerId *Peer
 
 	for {
-
-		if currentPeerId == nil {
-			peer, err := selectPeer()
-			if err != nil {
-				log.Println("Error selecting peer", err)
-				continue
-			}
-			currentPeerId = &peer
-		}
-
 		var message string
-		fmt.Scanln(&message)
+		if currentPeerId != nil {
+			fmt.Printf("%s > ", currentPeerId.ID)
+			fmt.Scanln(&message)
+		}
 
 		if currentPeerId == nil || message == "switch" {
 			peer, err := selectPeer()
@@ -111,9 +104,6 @@ func watchStdIn(clients chan map[string]Connection, myId string) {
 				continue
 			}
 			currentPeerId = &peer
-
-			log.Println("User wants to switch peers")
-
 		} else {
 			peerConnection, err := getOrCreatePeerConnection(clients, *currentPeerId, myId)
 			if err != nil {
@@ -164,7 +154,9 @@ func main() {
 
 	go watchStdIn(connectionsChannel, myId)
 
-	http.HandleFunc("/connect/{id}", func(w http.ResponseWriter, r *http.Request) {
+	router := mux.NewRouter()
+	router.HandleFunc("/connect/{id}", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Connection request from", r.RemoteAddr)
 		vars := mux.Vars(r)
 		id, ok := vars["id"]
 		if !ok {
@@ -180,6 +172,6 @@ func main() {
 	})
 
 	connectionsChannel <- peerConnections
-	panic(http.Serve(listener, nil))
+	panic(http.Serve(listener, router))
 
 }
